@@ -1,3 +1,5 @@
+![github-banner](https://github.com/user-attachments/assets/b03ee01b-099e-4865-94d0-c607bbafce45)
+
 # Waggle Examples
 
 Code samples and tutorials for building with the [A2A (Agent-to-Agent) protocol](https://a2a-protocol.org/latest/specification/). Companion repo to the [Waggle blog](https://waggle.zone/blog).
