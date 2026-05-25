@@ -1,13 +1,13 @@
 # A2A Agent from Scratch
 
-A minimal A2A 0.3.0 implementation in raw Python. It is built as a companion to the Waggle blog tutorial and intentionally keeps the business logic simple so the protocol details are easy to see.
+A minimal A2A 1.0 implementation in raw Python. It is built as a companion to the Waggle blog tutorial and intentionally keeps the business logic simple so the protocol details are easy to see.
 
 ## What's in here
 
 | File | Description |
 |------|-------------|
-| `agent_card.py` | Agent card definition with `preferredTransport` and JSON-RPC endpoint metadata |
-| `server.py` | Flask server with agent discovery plus `message/send`, `tasks/get`, and `tasks/cancel` |
+| `agent_card.py` | Agent card definition with `supportedInterfaces` and JSON-RPC endpoint metadata |
+| `server.py` | Flask server with agent discovery plus `SendMessage`, `GetTask`, and `CancelTask` |
 | `converter.py` | Unit conversion logic (temperature, distance, weight) |
 | `client.py` | Console client that discovers the agent, sends requests, and fetches stored task state |
 
@@ -38,17 +38,17 @@ curl http://localhost:5000/.well-known/agent-card.json | python -m json.tool
 ```bash
 curl -X POST http://localhost:5000 \
   -H "Content-Type: application/json" \
+  -H "A2A-Version: 1.0" \
   -d '{
     "jsonrpc": "2.0",
     "id": "req-1",
-    "method": "message/send",
+    "method": "SendMessage",
     "params": {
       "message": {
-        "kind": "message",
         "messageId": "msg-1",
         "contextId": "ctx-1",
-        "role": "user",
-        "parts": [{"kind": "text", "text": "Convert 100 Fahrenheit to Celsius"}]
+        "role": "ROLE_USER",
+        "parts": [{"text": "Convert 100 Fahrenheit to Celsius"}]
       },
       "configuration": {
         "acceptedOutputModes": ["text/plain"]
@@ -59,15 +59,16 @@ curl -X POST http://localhost:5000 \
 
 ### Fetch the stored task
 
-Replace `TASK_ID_HERE` with the task id returned by `message/send`.
+Replace `TASK_ID_HERE` with the task id returned by `SendMessage`.
 
 ```bash
 curl -X POST http://localhost:5000 \
   -H "Content-Type: application/json" \
+  -H "A2A-Version: 1.0" \
   -d '{
     "jsonrpc": "2.0",
     "id": "req-2",
-    "method": "tasks/get",
+    "method": "GetTask",
     "params": {
       "id": "TASK_ID_HERE",
       "historyLength": 1
@@ -82,10 +83,11 @@ This implementation finishes work immediately, so cancellation returns the A2A `
 ```bash
 curl -X POST http://localhost:5000 \
   -H "Content-Type: application/json" \
+  -H "A2A-Version: 1.0" \
   -d '{
     "jsonrpc": "2.0",
     "id": "req-3",
-    "method": "tasks/cancel",
+    "method": "CancelTask",
     "params": {
       "id": "TASK_ID_HERE"
     }
@@ -96,5 +98,5 @@ curl -X POST http://localhost:5000 \
 
 - [A2A for Beginners, Part 1](https://waggle.zone/blog/02_a2a-for-beginners-part-1)
 - [A2A for Beginners, Part 2](https://waggle.zone/blog/03_a2a-for-beginners-part-2)
-- [A2A 0.3.0 Specification](https://a2a-protocol.org/v0.3.0/specification/)
+- [A2A Specification](https://a2a-protocol.org/latest/specification/)
 - [Waggle](https://waggle.zone)

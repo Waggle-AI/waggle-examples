@@ -1,16 +1,14 @@
 AGENT_CARD = {
     "name": "Unit Converter",
     "description": "Converts between common units of measurement including temperature, distance, and weight.",
-    "url": "http://localhost:5000",
-    "preferredTransport": "JSONRPC",
-    "additionalInterfaces": [
+    "supportedInterfaces": [
         {
             "url": "http://localhost:5000",
-            "transport": "JSONRPC",
+            "protocolBinding": "JSONRPC",
+            "protocolVersion": "1.0",
         }
     ],
     "version": "1.0.0",
-    "protocolVersion": "0.3.0",
     "capabilities": {
         "streaming": False,
         "pushNotifications": False
@@ -50,6 +48,7 @@ AGENT_CARD = {
         }
     ],
     "provider": {
-        "organization": "A2A Tutorial"
+        "organization": "A2A Tutorial",
+        "url": "http://localhost:5000"
     }
 }

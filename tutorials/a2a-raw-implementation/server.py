@@ -16,7 +16,13 @@ TASK_NOT_CANCELABLE = -32002
 UNSUPPORTED_OPERATION = -32003
 CONTENT_TYPE_NOT_SUPPORTED = -32005
 
-TERMINAL_STATES = {"completed", "failed", "canceled", "rejected"}
+A2A_VERSION = "1.0"
+TERMINAL_STATES = {
+    "TASK_STATE_COMPLETED",
+    "TASK_STATE_FAILED",
+    "TASK_STATE_CANCELED",
+    "TASK_STATE_REJECTED",
+}
 
 
 def utc_now():
@@ -27,11 +33,10 @@ def utc_now():
 def build_message(role, text, context_id, task_id=None):
     """Create an A2A message object."""
     message = {
-        "kind": "message",
         "messageId": str(uuid.uuid4()),
         "contextId": context_id,
         "role": role,
-        "parts": [{"kind": "text", "text": text}],
+        "parts": [{"text": text}],
     }
     if task_id is not None:
         message["taskId"] = task_id
@@ -41,7 +46,6 @@ def build_message(role, text, context_id, task_id=None):
 def build_task(task_id, context_id, state, history, artifacts=None, status_text=None):
     """Create an A2A task object."""
     task = {
-        "kind": "task",
         "id": task_id,
         "contextId": context_id,
         "status": {
@@ -53,7 +57,7 @@ def build_task(task_id, context_id, state, history, artifacts=None, status_text=
     if artifacts:
         task["artifacts"] = artifacts
     if status_text:
-        task["status"]["message"] = build_message("agent", status_text, context_id, task_id)
+        task["status"]["message"] = build_message("ROLE_AGENT", status_text, context_id, task_id)
     return task
 
 
@@ -103,27 +107,30 @@ def jsonrpc():
     request_id = body.get("id")
     params = body.get("params", {})
 
-    if method == "message/send":
+    if request.headers.get("A2A-Version") != A2A_VERSION:
+        return jsonrpc_error(request_id, -32600, "A2A-Version header must be '1.0'")
+
+    if method == "SendMessage":
         return handle_message_send(request_id, params)
-    if method == "tasks/get":
+    if method == "GetTask":
         return handle_tasks_get(request_id, params)
-    if method == "tasks/cancel":
+    if method == "CancelTask":
         return handle_tasks_cancel(request_id, params)
     return jsonrpc_error(request_id, -32601, f"Method not found: {method}")
 
 
 def handle_message_send(request_id, params):
-    """Handle the message/send method."""
+    """Handle the SendMessage method."""
     if not isinstance(params, dict):
         return jsonrpc_error(request_id, -32602, "params must be an object")
 
     message = params.get("message")
     if not isinstance(message, dict):
         return jsonrpc_error(request_id, -32602, "params.message is required")
-    if message.get("kind") != "message":
-        return jsonrpc_error(request_id, -32602, "params.message.kind must be 'message'")
     if not message.get("messageId"):
         return jsonrpc_error(request_id, -32602, "params.message.messageId is required")
+    if message.get("role") != "ROLE_USER":
+        return jsonrpc_error(request_id, -32602, "params.message.role must be 'ROLE_USER'")
 
     parts = message.get("parts")
     if not isinstance(parts, list) or not parts:
@@ -132,7 +139,7 @@ def handle_message_send(request_id, params):
     configuration = params.get("configuration", {})
     if configuration and not isinstance(configuration, dict):
         return jsonrpc_error(request_id, -32602, "params.configuration must be an object")
-    if configuration.get("pushNotificationConfig"):
+    if configuration.get("taskPushNotificationConfig"):
         return jsonrpc_error(
             request_id,
             UNSUPPORTED_OPERATION,
@@ -148,7 +155,7 @@ def handle_message_send(request_id, params):
 
     text = ""
     for part in parts:
-        if isinstance(part, dict) and part.get("kind") == "text":
+        if isinstance(part, dict):
             text = part.get("text", "").strip()
             if text:
                 break
@@ -164,39 +171,39 @@ def handle_message_send(request_id, params):
     try:
         result = convert(text)
     except ValueError as exc:
-        agent_message = build_message("agent", str(exc), context_id, task_id)
+        agent_message = build_message("ROLE_AGENT", str(exc), context_id, task_id)
         history.append(agent_message)
         task = build_task(
             task_id,
             context_id,
-            "failed",
+            "TASK_STATE_FAILED",
             history,
             status_text=str(exc),
         )
     else:
         success_text = "Conversion completed."
-        history.append(build_message("agent", result, context_id, task_id))
+        history.append(build_message("ROLE_AGENT", result, context_id, task_id))
         task = build_task(
             task_id,
             context_id,
-            "completed",
+            "TASK_STATE_COMPLETED",
             history,
             artifacts=[
                 {
                     "artifactId": str(uuid.uuid4()),
                     "name": "conversion-result",
-                    "parts": [{"kind": "text", "text": result}],
+                    "parts": [{"text": result}],
                 }
             ],
             status_text=success_text,
         )
 
     TASKS[task_id] = deepcopy(task)
-    return jsonrpc_result(request_id, task)
+    return jsonrpc_result(request_id, {"task": task})
 
 
 def handle_tasks_get(request_id, params):
-    """Handle the tasks/get method."""
+    """Handle the GetTask method."""
     if not isinstance(params, dict):
         return jsonrpc_error(request_id, -32602, "params must be an object")
 
@@ -220,7 +227,7 @@ def handle_tasks_get(request_id, params):
 
 
 def handle_tasks_cancel(request_id, params):
-    """Handle the tasks/cancel method."""
+    """Handle the CancelTask method."""
     if not isinstance(params, dict):
         return jsonrpc_error(request_id, -32602, "params must be an object")
 
@@ -242,11 +249,11 @@ def handle_tasks_cancel(request_id, params):
         )
 
     canceled_message = "Task canceled."
-    task["status"]["state"] = "canceled"
+    task["status"]["state"] = "TASK_STATE_CANCELED"
     task["status"]["timestamp"] = utc_now()
-    task["status"]["message"] = build_message("agent", canceled_message, task["contextId"], task["id"])
+    task["status"]["message"] = build_message("ROLE_AGENT", canceled_message, task["contextId"], task["id"])
     task.setdefault("history", []).append(
-        build_message("agent", canceled_message, task["contextId"], task["id"])
+        build_message("ROLE_AGENT", canceled_message, task["contextId"], task["id"])
     )
     TASKS[task_id] = deepcopy(task)
     return jsonrpc_result(request_id, task)

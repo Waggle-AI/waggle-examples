@@ -13,11 +13,8 @@ def discover(base_url):
 
 def get_jsonrpc_endpoint(card):
     """Return the JSON-RPC endpoint from the agent card."""
-    if card.get("preferredTransport") == "JSONRPC":
-        return card["url"]
-
-    for interface in card.get("additionalInterfaces", []):
-        if interface.get("transport") == "JSONRPC":
+    for interface in card.get("supportedInterfaces", []):
+        if interface.get("protocolBinding") == "JSONRPC":
             return interface["url"]
 
     raise ValueError("Agent card does not declare a JSON-RPC endpoint")
@@ -25,7 +22,12 @@ def get_jsonrpc_endpoint(card):
 
 def post_jsonrpc(agent_url, payload):
     """POST a JSON-RPC request and return the decoded response."""
-    response = requests.post(agent_url, json=payload, timeout=10)
+    response = requests.post(
+        agent_url,
+        json=payload,
+        headers={"A2A-Version": "1.0"},
+        timeout=10,
+    )
     try:
         result = response.json()
     except ValueError:
@@ -38,18 +40,17 @@ def post_jsonrpc(agent_url, payload):
 
 
 def send_message(agent_url, text, context_id=None):
-    """Send a message/send request and return the task response."""
+    """Send a SendMessage request and return the task response."""
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
-        "method": "message/send",
+        "method": "SendMessage",
         "params": {
             "message": {
-                "kind": "message",
                 "messageId": str(uuid.uuid4()),
                 "contextId": context_id or str(uuid.uuid4()),
-                "role": "user",
-                "parts": [{"kind": "text", "text": text}],
+                "role": "ROLE_USER",
+                "parts": [{"text": text}],
             },
             "configuration": {
                 "acceptedOutputModes": ["text/plain"],
@@ -68,7 +69,7 @@ def get_task(agent_url, task_id, history_length=None):
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
-        "method": "tasks/get",
+        "method": "GetTask",
         "params": params,
     }
     return post_jsonrpc(agent_url, payload)
@@ -79,7 +80,7 @@ def cancel_task(agent_url, task_id):
     payload = {
         "jsonrpc": "2.0",
         "id": str(uuid.uuid4()),
-        "method": "tasks/cancel",
+        "method": "CancelTask",
         "params": {"id": task_id},
     }
     return post_jsonrpc(agent_url, payload)
@@ -91,18 +92,19 @@ def print_response(result):
         print(f"Error {result['error']['code']}: {result['error']['message']}")
         return
 
-    task = result.get("result", {})
+    response_result = result.get("result", {})
+    task = response_result.get("task", response_result)
     state = task.get("status", {}).get("state")
 
-    if state == "completed":
+    if state == "TASK_STATE_COMPLETED":
         for artifact in task.get("artifacts", []):
             for part in artifact.get("parts", []):
-                if part.get("kind") == "text":
+                if part.get("text"):
                     print(part["text"])
-    elif state == "failed":
+    elif state == "TASK_STATE_FAILED":
         status_message = task.get("status", {}).get("message", {})
         for part in status_message.get("parts", []):
-            if part.get("kind") == "text":
+            if part.get("text"):
                 print(f"Agent error: {part['text']}")
                 return
         print("Agent error: task failed")
@@ -117,7 +119,7 @@ def main():
     card = discover(base_url)
     agent_url = get_jsonrpc_endpoint(card)
     print(f"Found: {card['name']} - {card['description']}")
-    print(f"Transport: {card['preferredTransport']} -> {agent_url}")
+    print(f"Transport: JSONRPC -> {agent_url}")
     print(f"Skills: {', '.join(s['name'] for s in card['skills'])}")
     print()
 
@@ -137,7 +139,8 @@ def main():
         result = send_message(agent_url, text)
         print_response(result)
 
-        task = result.get("result", {})
+        response_result = result.get("result", {})
+        task = response_result.get("task", response_result)
         if task.get("id"):
             latest = get_task(agent_url, task["id"], history_length=1)
             print(f"Stored task state: {latest.get('result', {}).get('status', {}).get('state')}")

@@ -170,6 +170,13 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Local example outputs and development-only tests
+examples/**/outputs/
+examples/**/tests/
+examples/**/test_*.py
+examples/**/.env
+examples/**/cdk.out/
+
 # PyPI configuration file
 .pypirc
 

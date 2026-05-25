@@ -18,9 +18,10 @@ from a2a.client.client import ClientConfig
 from a2a.client.client_factory import ClientFactory
 from a2a.types import (
     Message,
+    Part,
     Role,
+    SendMessageRequest,
     TaskState,
-    TextPart,
 )
 
 
@@ -37,9 +38,7 @@ async def discover_agent(base_url: str):
 def extract_text(parts) -> str:
     """Extract text from a list of parts."""
     for part in parts:
-        if hasattr(part, "root"):
-            part = part.root
-        if isinstance(part, TextPart):
+        if part.text:
             return part.text
     return ""
 
@@ -47,21 +46,24 @@ def extract_text(parts) -> str:
 async def send_and_print(client, text: str) -> None:
     """Send a message and print the response."""
     message = Message(
-        role=Role.user,
-        parts=[TextPart(text=text)],
-        messageId=uuid4().hex,
+        role=Role.ROLE_USER,
+        parts=[Part(text=text)],
+        message_id=uuid4().hex,
     )
-    response = client.send_message(message)
+    response = client.send_message(SendMessageRequest(message=message))
 
-    async for chunk in response:
-        task, _ = chunk
+    async for stream_response in response:
+        if not stream_response.HasField("task"):
+            continue
 
-        if task.status.state == TaskState.completed:
+        task = stream_response.task
+
+        if task.status.state == TaskState.TASK_STATE_COMPLETED:
             for artifact in task.artifacts:
                 text = extract_text(artifact.parts)
                 if text:
                     print(f"  {text}")
-        elif task.status.state == TaskState.failed:
+        elif task.status.state == TaskState.TASK_STATE_FAILED:
             if task.status.message:
                 err = extract_text(task.status.message.parts)
                 print(f"  Error: {err}")

@@ -1,0 +1,7 @@
+{
+  "app": "python infra/app.py",
+  "context": {
+    "openaiSecretName": "implicit-geometry/openai-api-key",
+    "openaiModel": "gpt-5-mini"
+  }
+}

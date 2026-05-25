@@ -19,25 +19,30 @@ from a2a.client import A2ACardResolver
 from a2a.client.client import ClientConfig
 from a2a.client.client_factory import ClientFactory
 from a2a.server.agent_execution import AgentExecutor, RequestContext
-from a2a.server.apps import A2AStarletteApplication
-from a2a.server.events import EventQueue
+from a2a.server.events.event_queue_v2 import EventQueue
 from a2a.server.request_handlers import DefaultRequestHandler
+from a2a.server.routes.agent_card_routes import create_agent_card_routes
+from a2a.server.routes.jsonrpc_routes import create_jsonrpc_routes
 from a2a.server.tasks import InMemoryTaskStore
 from a2a.types import (
     AgentCapabilities,
     AgentCard,
+    AgentInterface,
+    AgentProvider,
     AgentSkill,
     Artifact,
     Message,
+    Part,
     Role,
+    SendMessageRequest,
+    Task,
     TaskArtifactUpdateEvent,
     TaskState,
     TaskStatus,
     TaskStatusUpdateEvent,
-    TextPart,
 )
-from a2a.utils.message import new_agent_text_message
-from a2a.utils.task import new_task
+from a2a.utils.constants import PROTOCOL_VERSION_CURRENT, TransportProtocol
+from starlette.applications import Starlette
 
 # ---------------------------------------------------------------------------
 # Travel knowledge base
@@ -130,21 +135,21 @@ async def delegate_conversion(
     try:
         # Step 3: Send message
         message = Message(
-            role=Role.user,
-            parts=[TextPart(text=f"{amount:.2f} {source} to {target}")],
-            messageId=uuid4().hex,
+            role=Role.ROLE_USER,
+            parts=[Part(text=f"{amount:.2f} {source} to {target}")],
+            message_id=uuid4().hex,
         )
-        response = client.send_message(message)
+        response = client.send_message(SendMessageRequest(message=message))
 
         # Step 4: Read result
         result_text = None
-        async for chunk in response:
-            delegate_task, _ = chunk
+        async for stream_response in response:
+            if not stream_response.HasField("task"):
+                continue
+            delegate_task = stream_response.task
             for artifact in delegate_task.artifacts:
                 for part in artifact.parts:
-                    if hasattr(part, "root"):
-                        part = part.root
-                    if isinstance(part, TextPart):
+                    if part.text:
                         result_text = part.text
         return result_text
     finally:
@@ -162,17 +167,10 @@ class TravelExecutor(AgentExecutor):
     async def execute(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
-        task = context.current_task or new_task(context.message)
+        task = context.current_task or _new_task(context)
         await event_queue.enqueue_event(task)
 
-        # Extract user text
-        user_text = ""
-        for part in context.message.parts:
-            if hasattr(part, "root"):
-                part = part.root
-            if isinstance(part, TextPart):
-                user_text = part.text
-                break
+        user_text = context.get_user_input()
 
         # Handle "list" or "help" commands
         if user_text.strip().lower() in ("list", "help", "menu", "items"):
@@ -205,12 +203,11 @@ class TravelExecutor(AgentExecutor):
         # Delegation needed - tell the user what's happening
         await event_queue.enqueue_event(
             TaskStatusUpdateEvent(
-                taskId=context.task_id,
-                contextId=context.context_id,
-                final=False,
+                task_id=task.id,
+                context_id=task.context_id,
                 status=TaskStatus(
-                    state=TaskState.working,
-                    message=new_agent_text_message(
+                    state=TaskState.TASK_STATE_WORKING,
+                    message=_agent_text_message(
                         f"Looking up {item_label} ({price:,.0f} "
                         f"{local_currency}). Asking the Currency Agent "
                         f"to convert to {target_currency}..."
@@ -256,28 +253,55 @@ class TravelExecutor(AgentExecutor):
         """Send a result artifact and mark the task completed."""
         await event_queue.enqueue_event(
             TaskArtifactUpdateEvent(
-                taskId=context.task_id,
-                contextId=context.context_id,
+                task_id=context.task_id or "",
+                context_id=context.context_id or "",
                 artifact=Artifact(
-                    artifactId=f"{context.task_id}-result",
+                    artifact_id=f"{context.task_id}-result",
                     name="travel_result",
-                    parts=[TextPart(text=text)],
+                    parts=[Part(text=text)],
                 ),
             )
         )
         await event_queue.enqueue_event(
             TaskStatusUpdateEvent(
-                taskId=context.task_id,
-                contextId=context.context_id,
-                final=True,
-                status=TaskStatus(state=TaskState.completed),
+                task_id=context.task_id or "",
+                context_id=context.context_id or "",
+                status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
             )
         )
 
     async def cancel(
         self, context: RequestContext, event_queue: EventQueue
     ) -> None:
-        raise Exception("cancel not supported")
+        await event_queue.enqueue_event(
+            TaskStatusUpdateEvent(
+                task_id=context.task_id or "",
+                context_id=context.context_id or "",
+                status=TaskStatus(
+                    state=TaskState.TASK_STATE_CANCELED,
+                    message=_agent_text_message("Cancellation requested."),
+                ),
+            )
+        )
+
+
+def _agent_text_message(text: str) -> Message:
+    return Message(
+        message_id=uuid4().hex,
+        role=Role.ROLE_AGENT,
+        parts=[Part(text=text)],
+    )
+
+
+def _new_task(context: RequestContext) -> Task:
+    task = Task(
+        id=context.task_id or uuid4().hex,
+        context_id=context.context_id or uuid4().hex,
+        status=TaskStatus(state=TaskState.TASK_STATE_SUBMITTED),
+    )
+    if context.message:
+        task.history.append(context.message)
+    return task
 
 
 # ---------------------------------------------------------------------------
@@ -308,10 +332,20 @@ if __name__ == "__main__":
             "Knows typical travel costs in cities worldwide and converts "
             "prices to your preferred currency using the Currency Agent."
         ),
-        url="http://localhost:5002",
+        supported_interfaces=[
+            AgentInterface(
+                url="http://localhost:5002",
+                protocol_binding=TransportProtocol.JSONRPC.value,
+                protocol_version=PROTOCOL_VERSION_CURRENT,
+            )
+        ],
+        provider=AgentProvider(
+            organization="Waggle Examples",
+            url="http://localhost:5002",
+        ),
         version="1.0.0",
-        defaultInputModes=["text"],
-        defaultOutputModes=["text"],
+        default_input_modes=["text/plain"],
+        default_output_modes=["text/plain"],
         capabilities=AgentCapabilities(streaming=True),
         skills=[skill],
     )
@@ -319,15 +353,18 @@ if __name__ == "__main__":
     request_handler = DefaultRequestHandler(
         agent_executor=TravelExecutor(),
         task_store=InMemoryTaskStore(),
+        agent_card=agent_card,
     )
 
-    app = A2AStarletteApplication(
-        agent_card=agent_card,
-        http_handler=request_handler,
+    app = Starlette(
+        routes=[
+            *create_agent_card_routes(agent_card),
+            *create_jsonrpc_routes(request_handler, "/", enable_v0_3_compat=True),
+        ]
     )
 
     print("Travel Agent starting on http://localhost:5002")
     print(f"Will delegate currency conversion to {CURRENCY_AGENT_URL}")
     print()
-    uvicorn.run(app.build(), host="127.0.0.1", port=5002)
+    uvicorn.run(app, host="127.0.0.1", port=5002)
 
