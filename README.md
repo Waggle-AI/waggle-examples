@@ -10,6 +10,7 @@ Code samples and tutorials for building with the [A2A (Agent-to-Agent) protocol]
 |----------|-------------|-----------|
 | [A2A Raw Implementation](tutorials/a2a-raw-implementation/) | Build an A2A agent from scratch in Python with Flask - no frameworks | [A2A for Beginners, Part 2](https://waggle.zone/blog/03_a2a-for-beginners-part-2) |
 | [A2A with the Official SDK](tutorials/a2a-with-sdk/) | Build A2A agents with the official Python SDK and agent-to-agent delegation | [A2A for Beginners, Part 3](https://waggle.zone/blog/04_a2a-for-beginners-part-3) |
+| [A2A Agent with x402 Payments](tutorials/a2a-x402-payments/) | Protect an A2A JSON-RPC endpoint with x402 payments while keeping discovery public | [Build an A2A Agent That Accepts x402 Payments](https://waggle.zone/blog/06_a2a-agent-with-x402-payments) |
 
 ## Examples
 
